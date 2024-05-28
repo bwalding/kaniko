@@ -98,6 +98,13 @@ func (k *Config) processLabels() []string {
 	return strings.Split(labels, ",")
 }
 
+func (k *Config) processRegistryMirrors() []string {
+	if len(k.RegistryMirrors) == 0 {
+		return []string{}
+	}
+	return strings.Split(k.RegistryMirrors, ",")
+}
+
 func (k *Config) lookupBinary() {
 	// The kaniko binary which executes the docker build and publish is called 'executor',
 	// which is in the path '/kaniko/executor'.
@@ -114,10 +121,27 @@ func (k *Config) env() []string {
 	return os.Environ()
 }
 
+func validateVerbosity(verbosity string) error {
+	knownVerbosities := []string{"panic", "fatal", "error", "warn", "info", "debug", "trace"}
+	for _, knownVerbosity := range knownVerbosities {
+		if verbosity == knownVerbosity {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown verbosity level: %s", verbosity)
+}
+
 func (k *Config) cmdBuilder(digestFile string) (*exec.Cmd, error) {
 	cmdArgs := []string{
-		"--verbosity=debug",
 		"--ignore-path=/cloudbees/",
+	}
+
+	if k.Verbosity != "" {
+		k.Verbosity = strings.ToLower(k.Verbosity)
+		if errVerbosity := validateVerbosity(k.Verbosity); errVerbosity != nil {
+			return nil, errVerbosity
+		}
+		cmdArgs = append(cmdArgs, "--verbosity="+k.Verbosity)
 	}
 
 	if k.Dockerfile != "" {
@@ -140,8 +164,16 @@ func (k *Config) cmdBuilder(digestFile string) (*exec.Cmd, error) {
 		cmdArgs = append(cmdArgs, "--label", label)
 	}
 
+	for _, mirror := range k.processRegistryMirrors() {
+		cmdArgs = append(cmdArgs, "--registry-mirror", mirror)
+	}
+
 	if digestFile != "" {
 		cmdArgs = append(cmdArgs, "--digest-file", digestFile)
+	}
+
+	if k.SkipDefaultRegistryFallback {
+		cmdArgs = append(cmdArgs, "--skip-default-registry-fallback")
 	}
 
 	kanikoCmd := exec.CommandContext(k.Context, k.ExecutablePath, cmdArgs...)
